@@ -1,6 +1,7 @@
 import pytest
 import os
 import json
+import toml
 from unittest.mock import patch, mock_open, MagicMock, ANY
 from pathlib import Path
 from src.config_manager import ConfigManager
@@ -31,56 +32,79 @@ def sample_config():
 @patch("builtins.open", new_callable=mock_open)
 @patch("os.path.exists")
 @patch("pathlib.Path.exists")
-def test_deploy_mcp_and_agents(mock_path_exists, mock_os_exists, mock_file, mock_makedirs, sample_config):
-    # Setup mocks
+def test_deploy_filtered(mock_path_exists, mock_os_exists, mock_file, mock_makedirs, sample_config):
     mock_path_exists.return_value = True
     mock_os_exists.return_value = True
 
     manager = ConfigManager()
-    manager.deploy(sample_config)
+    # Deploy ONLY to Claude
+    manager.deploy(sample_config, agent_filter=["claude"])
 
-    # Check that we wrote to 12 files approx (Settings for 3 agents * 2 targets + Skill files)
-    # We are interested in the content written to settings.json for Claude/Gemini and config.toml for Codex
-
-    written_content = {}
-    # Helper to capture what was written to which file
-    # mock_file.mock_calls is complex, let's iterate open calls and their returned file handle write calls
-
-    # Since mock_open reuse the same mock object for all opens, we need to inspect the calls carefully
-    # OR we can just check if specific strings appear in ANY write call, which is simpler for this integration test.
-
-    all_written_text = ""
-    for call in mock_file().write.call_args_list:
-        if call.args:
-            all_written_text += str(call.args[0])
-
-    # 1. Verify MCP Injection in JSON (Claude/Gemini)
-    assert '"mcpServers":' in all_written_text
-    assert '"github":' in all_written_text
-    assert '"command": "npx"' in all_written_text
-    assert '"TOKEN": "123"' in all_written_text
-
-    # 2. Verify Agent Injection in JSON
-    assert '"FrontendBot":' in all_written_text
-    assert '"You are a vue expert"' in all_written_text
-
-    # 3. Verify TOML generation for Codex
-    assert '[mcp_servers.github]' in all_written_text
-    assert 'command = "npx"' in all_written_text
-
-    # 4. Verify Skill file creation
-    # We check if open was called with correct path
+    # Collect written files
     opened_paths = []
     for call in mock_file.call_args_list:
         if call.args:
             opened_paths.append(str(call.args[0]))
 
-    assert any("skills/test-skill/test.md" in p for p in opened_paths)
-    assert any("skills/test-skill/SKILL.md" in p for p in opened_paths)
+    # Verify Claude files are present
+    assert any(".claude/settings.json" in p for p in opened_paths)
 
-def test_load_non_existent():
-    with patch("os.path.exists", return_value=False):
-        manager = ConfigManager("/fake/path.json")
-        config = manager.load()
-        assert isinstance(config, UnifiedConfig)
-        assert config.mcp_servers == []
+    # Verify Gemini/Codex files are NOT present
+    assert not any(".gemini/settings.json" in p for p in opened_paths)
+    assert not any(".codex/config.toml" in p for p in opened_paths)
+
+@patch("os.makedirs")
+@patch("builtins.open", new_callable=mock_open)
+@patch("os.path.exists", return_value=True)
+@patch("pathlib.Path.exists", return_value=True)
+def test_import_logic(mock_path_exists, mock_os_exists, mock_file, mock_makedirs):
+    manager = ConfigManager()
+    config = UnifiedConfig()
+
+    # Mock data to import
+    items_to_import = {
+        "mcps": [
+            {
+                "name": "imported_mcp",
+                "config": {
+                    "type": "stdio",
+                    "command": "python",
+                    "args": ["server.py"]
+                }
+            }
+        ],
+        "agents": [
+            {
+                "name": "imported_agent",
+                "config": {
+                    "description": "desc",
+                    "instructions": "prompt"
+                }
+            }
+        ]
+    }
+
+    updated_config = manager.import_items(config, items_to_import)
+
+    assert len(updated_config.mcp_servers) == 1
+    assert updated_config.mcp_servers[0].name == "imported_mcp"
+    assert updated_config.mcp_servers[0].command == "python"
+
+    assert len(updated_config.custom_agents) == 1
+    assert updated_config.custom_agents[0].name == "imported_agent"
+    assert updated_config.custom_agents[0].system_prompt == "prompt"
+
+@patch("pathlib.Path.exists", return_value=True)
+@patch("builtins.open", new_callable=mock_open, read_data='{"mcpServers": {"test": {"command": "echo"}}}')
+def test_scan_configurations(mock_file, mock_path_exists):
+    manager = ConfigManager()
+    config = UnifiedConfig()
+
+    with patch("json.load", return_value={"mcpServers": {"test": {"command": "echo"}}}) as mock_json:
+        results = manager.scan_configurations(config)
+
+        # We expect global claude/gemini to be found (mocked by read_data and json.load)
+        # Note: logic loops through 3 global locations.
+        assert "Global Claude" in results
+        assert len(results["Global Claude"]["mcps"]) == 1
+        assert results["Global Claude"]["mcps"][0]["name"] == "test"

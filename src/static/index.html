@@ -16,13 +16,32 @@
         <!-- Header -->
         <header class="flex justify-between items-center mb-6 bg-white p-4 rounded shadow">
             <h1 class="text-2xl font-bold text-gray-800">Unified Agent Config</h1>
-            <div>
-                <button @click="saveConfig" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded mr-2 disabled:opacity-50" :disabled="loading">
+            <div class="flex gap-2">
+                <button @click="showImportModal = true; scanConfigs()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">
+                    Import
+                </button>
+                <button @click="saveConfig" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded" :disabled="loading">
                     Save Config
                 </button>
-                <button @click="deployConfig" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50" :disabled="deploying">
-                    {{ deploying ? 'Deploying...' : 'Deploy to Agents' }}
-                </button>
+
+                <div class="relative inline-block text-left">
+                    <div>
+                        <button @click="showDeployMenu = !showDeployMenu" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded inline-flex items-center" :disabled="deploying">
+                            {{ deploying ? 'Deploying...' : 'Deploy' }}
+                            <svg class="-mr-1 ml-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div v-if="showDeployMenu" class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
+                        <div class="py-1">
+                            <a href="#" @click.prevent="deployConfig()" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Deploy All</a>
+                            <a href="#" @click.prevent="deployConfig(['claude'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Deploy Claude</a>
+                            <a href="#" @click.prevent="deployConfig(['gemini'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Deploy Gemini</a>
+                            <a href="#" @click.prevent="deployConfig(['codex'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Deploy Codex</a>
+                        </div>
+                    </div>
+                </div>
             </div>
         </header>
 
@@ -146,16 +165,65 @@
 
         </main>
 
+        <!-- Import Modal -->
+        <div v-if="showImportModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl p-6 max-h-[90vh] flex flex-col">
+                <h2 class="text-2xl font-bold mb-4">Import Configurations</h2>
+
+                <div v-if="scanning" class="flex-grow flex items-center justify-center">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                </div>
+
+                <div v-else class="flex-grow overflow-y-auto">
+                    <div v-if="Object.keys(scanResults).length === 0" class="text-gray-500 text-center">
+                        No importable configurations found.
+                    </div>
+
+                    <div v-for="(data, source) in scanResults" :key="source" class="mb-4 border rounded p-4">
+                        <h3 class="font-bold text-lg mb-2">{{ source }}</h3>
+
+                        <div v-if="data.mcps && data.mcps.length">
+                            <h4 class="font-semibold text-sm mt-2 text-gray-600">MCP Servers</h4>
+                            <div v-for="mcp in data.mcps" :key="mcp.name" class="ml-4 flex items-center gap-2">
+                                <input type="checkbox" v-model="selectedImports[source].mcps" :value="mcp">
+                                <span class="text-sm font-mono">{{ mcp.name }}</span>
+                            </div>
+                        </div>
+
+                        <div v-if="data.agents && data.agents.length">
+                            <h4 class="font-semibold text-sm mt-2 text-gray-600">Agents</h4>
+                            <div v-for="agent in data.agents" :key="agent.name" class="ml-4 flex items-center gap-2">
+                                <input type="checkbox" v-model="selectedImports[source].agents" :value="agent">
+                                <span class="text-sm font-mono">{{ agent.name }}</span>
+                            </div>
+                        </div>
+
+                        <div v-if="data.skills && data.skills.length">
+                            <h4 class="font-semibold text-sm mt-2 text-gray-600">Skills</h4>
+                            <div v-for="skill in data.skills" :key="skill.name" class="ml-4 flex items-center gap-2">
+                                <input type="checkbox" v-model="selectedImports[source].skills" :value="skill">
+                                <span class="text-sm font-mono">{{ skill.name }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-4 pt-2 border-t">
+                    <button @click="showImportModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button @click="performImport" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600" :disabled="scanning">Import Selected</button>
+                </div>
+            </div>
+        </div>
+
         <!-- MCP Modal -->
         <div v-if="showMcpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
              <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
                 <h2 class="text-2xl font-bold mb-4">{{ editingMcpIndex === -1 ? 'New MCP Server' : 'Edit MCP Server' }}</h2>
-
+                <!-- Form same as before -->
                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Name</label>
                     <input v-model="mcpForm.name" class="w-full border p-2 rounded" placeholder="e.g. github">
                 </div>
-
                  <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Type</label>
                     <select v-model="mcpForm.type" class="w-full border p-2 rounded">
@@ -164,7 +232,6 @@
                         <option value="sse">sse (Server-Sent Events)</option>
                     </select>
                 </div>
-
                 <div v-if="mcpForm.type === 'stdio'">
                      <div class="mb-4">
                         <label class="block text-sm font-medium mb-1">Command</label>
@@ -179,14 +246,12 @@
                          <button @click="mcpForm.args.push('')" class="text-sm text-blue-500">+ Add Argument</button>
                     </div>
                 </div>
-
                 <div v-if="mcpForm.type !== 'stdio'">
                      <div class="mb-4">
                         <label class="block text-sm font-medium mb-1">URL</label>
                         <input v-model="mcpForm.url" class="w-full border p-2 rounded" placeholder="https://...">
                     </div>
                 </div>
-
                  <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Environment Variables</label>
                     <div v-for="(env, i) in mcpForm.env" :key="i" class="flex gap-2 mb-2">
@@ -196,7 +261,6 @@
                     </div>
                     <button @click="mcpForm.env.push({key: '', value: ''})" class="text-sm text-blue-500">+ Add Env Var</button>
                 </div>
-
                 <div class="flex justify-end gap-2 mt-6">
                     <button @click="showMcpModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
                     <button @click="saveMcp" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
@@ -227,12 +291,10 @@
              </div>
         </div>
 
-
-        <!-- Skill Modal (Updated for Multi-file) -->
+        <!-- Skill Modal -->
         <div v-if="showSkillModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl p-6 h-[80vh] flex flex-col">
                 <h2 class="text-2xl font-bold mb-4">{{ editingSkillIndex === -1 ? 'New Skill' : 'Edit Skill' }}</h2>
-
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                          <label class="block text-sm font-medium mb-1">Name</label>
@@ -243,9 +305,7 @@
                         <input v-model="skillForm.description" class="w-full border p-2 rounded" placeholder="Short description">
                     </div>
                 </div>
-
                 <div class="flex-grow flex border rounded overflow-hidden">
-                    <!-- File List -->
                     <div class="w-1/3 border-r bg-gray-50 flex flex-col">
                         <div class="p-2 bg-gray-100 font-bold text-xs uppercase text-gray-500">Files</div>
                         <div class="overflow-y-auto flex-grow">
@@ -259,8 +319,6 @@
                         </div>
                         <button @click="addSkillFile" class="p-2 text-center text-blue-500 border-t hover:bg-blue-50">+ Add File</button>
                     </div>
-
-                    <!-- File Editor -->
                     <div class="w-2/3 flex flex-col p-4">
                         <div v-if="skillForm.files.length > 0">
                              <input v-model="skillForm.files[currentSkillFileIndex].filename" class="w-full border p-2 rounded mb-2 font-mono text-sm" placeholder="filename.md">
@@ -271,7 +329,6 @@
                         </div>
                     </div>
                 </div>
-
                 <div class="flex justify-end gap-2 mt-4">
                     <button @click="showSkillModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
                     <button @click="saveSkill" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
@@ -301,6 +358,15 @@
                 const tabs = ['MCP Servers', 'Agents', 'Skills', 'Projects']
                 const currentTab = ref('MCP Servers')
 
+                // --- Import State ---
+                const showImportModal = ref(false)
+                const scanning = ref(false)
+                const scanResults = ref({})
+                const selectedImports = ref({})
+
+                // --- Deploy Menu ---
+                const showDeployMenu = ref(false)
+
                 // MCP Modal
                 const showMcpModal = ref(false)
                 const editingMcpIndex = ref(-1)
@@ -325,20 +391,13 @@
                     try {
                         const res = await fetch('/api/config')
                         const data = await res.json()
-
-                        // Default empty arrays if undefined
                         if (!data.mcp_servers) data.mcp_servers = []
                         if (!data.custom_agents) data.custom_agents = []
                         if (!data.skills) data.skills = []
-
-                        // Migrate legacy skills (content string -> files array)
                         data.skills.forEach(s => {
                             if (!s.files) s.files = []
-                            if (s.content && s.files.length === 0) {
-                                s.files.push({ filename: 'README.md', content: s.content })
-                            }
+                            if (s.content && s.files.length === 0) s.files.push({ filename: 'README.md', content: s.content })
                         })
-
                         Object.assign(config, data)
                     } catch (e) {
                         showNotify('Error loading config', 'error')
@@ -364,12 +423,18 @@
                     }
                 }
 
-                const deployConfig = async () => {
+                const deployConfig = async (filter = null) => {
+                    showDeployMenu.value = false
                     await saveConfig()
                     deploying.value = true
                     deploymentLog.value = []
                     try {
-                        const res = await fetch('/api/deploy', { method: 'POST' })
+                        const body = filter ? JSON.stringify({ agent_filter: filter }) : '{}'
+                        const res = await fetch('/api/deploy', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body
+                        })
                         const data = await res.json()
                         if (data.status === 'deployed') {
                             showNotify('Deployed successfully!', 'success')
@@ -384,6 +449,58 @@
                     }
                 }
 
+                const scanConfigs = async () => {
+                    scanning.value = true
+                    scanResults.value = {}
+                    selectedImports.value = {}
+                    try {
+                        const res = await fetch('/api/scan')
+                        const data = await res.json()
+                        scanResults.value = data
+
+                        // Initialize selected state
+                        for (const key in data) {
+                            selectedImports.value[key] = { mcps: [], agents: [], skills: [] }
+                        }
+                    } catch(e) {
+                        showNotify('Scan failed', 'error')
+                    } finally {
+                        scanning.value = false
+                    }
+                }
+
+                const performImport = async () => {
+                    // Aggregate items
+                    const items = { mcps: [], agents: [], skills: [] }
+
+                    for (const source in selectedImports.value) {
+                        items.mcps.push(...selectedImports.value[source].mcps)
+                        items.agents.push(...selectedImports.value[source].agents)
+                        items.skills.push(...selectedImports.value[source].skills)
+                    }
+
+                    if (items.mcps.length === 0 && items.agents.length === 0 && items.skills.length === 0) {
+                        return alert('Nothing selected')
+                    }
+
+                    try {
+                        const res = await fetch('/api/import', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ items })
+                        })
+                        const data = await res.json()
+                        if(data.status === 'imported') {
+                            showNotify('Imported successfully!', 'success')
+                            showImportModal.value = false
+                            // Refresh config
+                            await fetchConfig()
+                        }
+                    } catch(e) {
+                        showNotify('Import failed', 'error')
+                    }
+                }
+
                 const showNotify = (msg, type = 'success') => {
                     notification.value = { message: msg, type }
                     setTimeout(() => notification.value = null, 3000)
@@ -394,7 +511,6 @@
                     editingMcpIndex.value = index
                     if (index >= 0) {
                         const mcp = config.mcp_servers[index]
-                        // Deep copy
                         Object.assign(mcpForm, JSON.parse(JSON.stringify(mcp)))
                     } else {
                          Object.assign(mcpForm, { name: '', type: 'stdio', command: '', args: [], url: '', env: [] })
@@ -469,6 +585,12 @@
                     config, loading, deploying, notification, deploymentLog,
                     tabs, currentTab, newProject, addProject, removeProject,
                     saveConfig, deployConfig,
+
+                    // Import
+                    showImportModal, scanning, scanResults, selectedImports, scanConfigs, performImport,
+
+                    // Deploy
+                    showDeployMenu,
 
                     // MCP
                     showMcpModal, editingMcpIndex, mcpForm, openMcpModal, saveMcp, deleteMcp,
