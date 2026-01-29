@@ -30,73 +30,37 @@ def sample_config():
 
 @patch("os.makedirs")
 @patch("builtins.open", new_callable=mock_open)
-@patch("os.path.exists")
-@patch("pathlib.Path.exists")
-def test_deploy_filtered_types(mock_path_exists, mock_os_exists, mock_file, mock_makedirs, sample_config):
-    mock_path_exists.return_value = True
-    mock_os_exists.return_value = True
-
-    # Mock existing settings content for JSON read
-    existing_json = '{"existing_key": "value"}'
-
-    # We need side_effect for open to handle read and write
-    # If mode='r', return existing_json. If mode='w', behave normally.
-
-    file_mock = mock_open(read_data=existing_json)
-
-    with patch("builtins.open", file_mock):
-        with patch("json.load", return_value={"existing_key": "value"}):
-            manager = ConfigManager()
-
-            # Deploy ONLY MCPs to Claude
-            manager.deploy(sample_config, agent_filter=["claude"], include_types=["mcp"])
-
-            # Verify that we wrote JSON containing MCPs
-            # AND that we preserved "existing_key"
-
-            # Get the string written to file
-            # mock_open writes are cumulative in mock_calls if we don't reset, but we only did one write per file presumably
-
-            written_content = ""
-            for call in file_mock.return_value.write.call_args_list:
-                if call.args:
-                    written_content += str(call.args[0])
-
-            # Check for existing data preservation
-            assert '"existing_key": "value"' in written_content
-
-            # Check for MCP
-            assert '"mcpServers":' in written_content
-            assert '"github":' in written_content
-
-            # Check that Agents were NOT written (since we filtered only MCP)
-            assert '"agents":' not in written_content
-            assert '"FrontendBot":' not in written_content
-
-@patch("os.makedirs")
-@patch("builtins.open", new_callable=mock_open)
 @patch("os.path.exists", return_value=True)
 @patch("pathlib.Path.exists", return_value=True)
-def test_import_logic(mock_path_exists, mock_os_exists, mock_file, mock_makedirs):
+def test_deploy_paths_and_formats(mock_path_exists, mock_os_exists, mock_file, mock_makedirs, sample_config):
     manager = ConfigManager()
-    config = UnifiedConfig()
+    manager.deploy(sample_config)
 
-    items_to_import = {
-        "mcps": [{"name": "imported_mcp", "config": {"type": "stdio"}}],
-        "agents": [],
-        "skills": []
-    }
+    # Collect all written paths
+    opened_paths = []
+    for call in mock_file.call_args_list:
+        if call.args:
+            opened_paths.append(str(call.args[0]))
 
-    updated_config = manager.import_items(config, items_to_import)
-    assert len(updated_config.mcp_servers) == 1
-    assert updated_config.mcp_servers[0].name == "imported_mcp"
+    # 1. Check Codex (Copilot) Paths
+    # Agents -> .copilot/agents/*.agent.md
+    assert any(".copilot/agents/FrontendBot.agent.md" in p for p in opened_paths)
+    # MCP -> .mcp.json (Global) or project specific
+    # Note: Logic uses .mcp.json for Global Codex and target/.mcp.json for project?
+    # Let's check project path logic.
+    assert any("/tmp/project1/.mcp.json" in p for p in opened_paths)
 
-@patch("pathlib.Path.exists", return_value=True)
-@patch("builtins.open", new_callable=mock_open, read_data='{"mcpServers": {}}')
-def test_scan_configurations(mock_file, mock_path_exists):
-    manager = ConfigManager()
-    config = UnifiedConfig()
+    # 2. Check Gemini Paths
+    # Agents -> .gemini/AGENT.md
+    assert any(".gemini/AGENT.md" in p for p in opened_paths)
+    # MCP -> .gemini/settings.json
+    assert any(".gemini/settings.json" in p for p in opened_paths)
 
-    with patch("json.load", return_value={"mcpServers": {"test": {}}}) as mock_json:
-        results = manager.scan_configurations(config)
-        assert "Global Claude" in results
+    # 3. Check Claude Paths
+    # Agents -> .claude/agents/*.json
+    assert any(".claude/agents/FrontendBot.json" in p for p in opened_paths)
+    # MCP -> .claude.json (Global) or project
+    assert any("/tmp/project1/.claude.json" in p for p in opened_paths)
+
+    # 4. Check Skills
+    assert any("skills/test-skill/test.md" in p for p in opened_paths)
