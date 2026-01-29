@@ -42,7 +42,7 @@
         <div class="flex mb-6 border-b border-gray-300">
             <button v-for="tab in tabs" :key="tab"
                 @click="currentTab = tab"
-                class="px-6 py-2 font-medium focus:outline-none"
+                class="px-6 py-2 font-medium focus:outline-none transition-colors"
                 :class="currentTab === tab ? 'tab-active' : 'text-gray-500 hover:text-gray-700'">
                 {{ tab }}
             </button>
@@ -51,21 +51,58 @@
         <!-- Content -->
         <main class="bg-white p-6 rounded shadow min-h-[500px]">
 
-            <!-- Settings Tab -->
-            <div v-if="currentTab === 'Settings'">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div v-for="key in settingKeys" :key="key" class="border p-4 rounded">
-                        <h3 class="font-bold mb-2 capitalize">{{ key.replace('_', ' ') }}</h3>
-                        <p class="text-xs text-gray-500 mb-2">
-                            {{ key === 'common_settings' ? 'Applied to all agents (merged)' : 'Specific settings for ' + key.split('_')[0] }}
-                        </p>
-                        <textarea v-model="jsonStrings[key]" @input="validateJson(key, jsonStrings[key])"
-                            class="w-full h-64 p-2 border rounded font-mono text-sm"
-                            :class="errors[key] ? 'border-red-500' : 'border-gray-300'"></textarea>
-                        <p v-if="errors[key]" class="text-red-500 text-xs mt-1">{{ errors[key] }}</p>
+            <!-- MCP Servers Tab -->
+            <div v-if="currentTab === 'MCP Servers'">
+                <div class="flex justify-between mb-4">
+                    <h2 class="text-xl font-bold">MCP Servers ({{ config.mcp_servers.length }})</h2>
+                    <button @click="openMcpModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Server</button>
+                </div>
+
+                <div v-if="config.mcp_servers.length === 0" class="text-gray-500 text-center py-10">No MCP servers configured.</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div v-for="(server, index) in config.mcp_servers" :key="index" class="border p-4 rounded hover:shadow-lg transition">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg">{{ server.name }}</h3>
+                            <span class="text-xs bg-gray-200 px-2 py-1 rounded">{{ server.type }}</span>
+                        </div>
+                        <p v-if="server.type === 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.command }} {{ server.args.join(' ') }}</p>
+                        <p v-if="server.type !== 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.url }}</p>
+
+                        <div class="flex justify-end gap-2 border-t pt-2 mt-2">
+                            <button @click="openMcpModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
+                            <button @click="deleteMcp(index)" class="text-red-500 text-sm hover:underline">Delete</button>
+                        </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Agents Tab -->
+            <div v-if="currentTab === 'Agents'">
+                 <div class="flex justify-between mb-4">
+                    <h2 class="text-xl font-bold">Custom Agents ({{ config.custom_agents.length }})</h2>
+                    <button @click="openAgentModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Agent</button>
+                </div>
+
+                <div v-if="config.custom_agents.length === 0" class="text-gray-500 text-center py-10">No custom agents configured.</div>
+
+                <div class="grid grid-cols-1 gap-4">
+                    <div v-for="(agent, index) in config.custom_agents" :key="index" class="border p-4 rounded hover:shadow-lg transition">
+                         <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg">{{ agent.name }}</h3>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-2">{{ agent.description }}</p>
+                         <div class="bg-gray-50 p-2 rounded text-xs font-mono mb-2 max-h-20 overflow-hidden">
+                             {{ agent.system_prompt }}
+                         </div>
+                        <div class="flex justify-end gap-2 border-t pt-2">
+                            <button @click="openAgentModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
+                            <button @click="deleteAgent(index)" class="text-red-500 text-sm hover:underline">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
 
             <!-- Skills Tab -->
             <div v-if="currentTab === 'Skills'">
@@ -81,6 +118,7 @@
                         <div>
                             <h3 class="font-bold text-lg mb-1">{{ skill.name }}</h3>
                             <p class="text-gray-600 text-sm mb-3 h-10 overflow-hidden text-ellipsis">{{ skill.description }}</p>
+                            <p class="text-xs text-gray-400">{{ skill.files ? skill.files.length : 0 }} files</p>
                         </div>
                         <div class="flex justify-end gap-2 border-t pt-2">
                             <button @click="openSkillModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
@@ -104,32 +142,137 @@
                     </li>
                     <li v-if="config.projects.length === 0" class="p-4 text-gray-500 text-center">No projects added.</li>
                 </ul>
-                <p class="text-gray-500 italic mt-4 text-sm">Configs will be deployed to these project folders (in .claude, .gemini, etc.) in addition to the global user folder.</p>
             </div>
 
         </main>
 
-        <!-- Skill Modal -->
-        <div v-if="showSkillModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
-                <h2 class="text-2xl font-bold mb-4">{{ editingSkillIndex === -1 ? 'New Skill' : 'Edit Skill' }}</h2>
+        <!-- MCP Modal -->
+        <div v-if="showMcpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+             <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+                <h2 class="text-2xl font-bold mb-4">{{ editingMcpIndex === -1 ? 'New MCP Server' : 'Edit MCP Server' }}</h2>
 
                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Name</label>
-                    <input v-model="skillForm.name" class="w-full border p-2 rounded focus:ring focus:ring-blue-200" placeholder="e.g. api-tester">
+                    <input v-model="mcpForm.name" class="w-full border p-2 rounded" placeholder="e.g. github">
                 </div>
 
-                <div class="mb-4">
+                 <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Type</label>
+                    <select v-model="mcpForm.type" class="w-full border p-2 rounded">
+                        <option value="stdio">stdio (Local Command)</option>
+                        <option value="http">http (Remote URL)</option>
+                        <option value="sse">sse (Server-Sent Events)</option>
+                    </select>
+                </div>
+
+                <div v-if="mcpForm.type === 'stdio'">
+                     <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1">Command</label>
+                        <input v-model="mcpForm.command" class="w-full border p-2 rounded" placeholder="e.g. npx">
+                    </div>
+                     <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1">Arguments</label>
+                        <div v-for="(arg, i) in mcpForm.args" :key="i" class="flex gap-2 mb-2">
+                             <input v-model="mcpForm.args[i]" class="flex-grow border p-2 rounded">
+                             <button @click="mcpForm.args.splice(i, 1)" class="text-red-500">X</button>
+                        </div>
+                         <button @click="mcpForm.args.push('')" class="text-sm text-blue-500">+ Add Argument</button>
+                    </div>
+                </div>
+
+                <div v-if="mcpForm.type !== 'stdio'">
+                     <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1">URL</label>
+                        <input v-model="mcpForm.url" class="w-full border p-2 rounded" placeholder="https://...">
+                    </div>
+                </div>
+
+                 <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Environment Variables</label>
+                    <div v-for="(env, i) in mcpForm.env" :key="i" class="flex gap-2 mb-2">
+                        <input v-model="env.key" class="w-1/3 border p-2 rounded" placeholder="KEY">
+                        <input v-model="env.value" class="w-2/3 border p-2 rounded" placeholder="VALUE">
+                        <button @click="mcpForm.env.splice(i, 1)" class="text-red-500">X</button>
+                    </div>
+                    <button @click="mcpForm.env.push({key: '', value: ''})" class="text-sm text-blue-500">+ Add Env Var</button>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-6">
+                    <button @click="showMcpModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button @click="saveMcp" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent Modal -->
+        <div v-if="showAgentModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+             <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+                 <h2 class="text-2xl font-bold mb-4">{{ editingAgentIndex === -1 ? 'New Custom Agent' : 'Edit Custom Agent' }}</h2>
+                 <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Name</label>
+                    <input v-model="agentForm.name" class="w-full border p-2 rounded" placeholder="e.g. FrontendExpert">
+                </div>
+                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Description</label>
-                    <input v-model="skillForm.description" class="w-full border p-2 rounded focus:ring focus:ring-blue-200" placeholder="Short description">
+                    <input v-model="agentForm.description" class="w-full border p-2 rounded" placeholder="Expert in Vue and Tailwind">
                 </div>
-
-                <div class="mb-4">
-                    <label class="block text-sm font-medium mb-1">Content (Markdown)</label>
-                    <textarea v-model="skillForm.content" class="w-full h-64 border p-2 rounded font-mono text-sm focus:ring focus:ring-blue-200" placeholder="# Instructions..."></textarea>
+                 <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">System Prompt / Instructions</label>
+                    <textarea v-model="agentForm.system_prompt" class="w-full h-40 border p-2 rounded font-mono text-sm"></textarea>
                 </div>
-
                 <div class="flex justify-end gap-2">
+                    <button @click="showAgentModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button @click="saveAgent" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
+                </div>
+             </div>
+        </div>
+
+
+        <!-- Skill Modal (Updated for Multi-file) -->
+        <div v-if="showSkillModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl p-6 h-[80vh] flex flex-col">
+                <h2 class="text-2xl font-bold mb-4">{{ editingSkillIndex === -1 ? 'New Skill' : 'Edit Skill' }}</h2>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                         <label class="block text-sm font-medium mb-1">Name</label>
+                        <input v-model="skillForm.name" class="w-full border p-2 rounded" placeholder="e.g. api-tester">
+                    </div>
+                    <div>
+                         <label class="block text-sm font-medium mb-1">Description</label>
+                        <input v-model="skillForm.description" class="w-full border p-2 rounded" placeholder="Short description">
+                    </div>
+                </div>
+
+                <div class="flex-grow flex border rounded overflow-hidden">
+                    <!-- File List -->
+                    <div class="w-1/3 border-r bg-gray-50 flex flex-col">
+                        <div class="p-2 bg-gray-100 font-bold text-xs uppercase text-gray-500">Files</div>
+                        <div class="overflow-y-auto flex-grow">
+                             <div v-for="(file, i) in skillForm.files" :key="i"
+                                class="p-2 cursor-pointer hover:bg-blue-50 flex justify-between group"
+                                :class="currentSkillFileIndex === i ? 'bg-blue-100' : ''"
+                                @click="currentSkillFileIndex = i">
+                                <span class="truncate text-sm">{{ file.filename }}</span>
+                                <button @click.stop="skillForm.files.splice(i, 1); if(currentSkillFileIndex>=i) currentSkillFileIndex=Math.max(0, skillForm.files.length-1)" class="text-red-400 hover:text-red-600 hidden group-hover:block">x</button>
+                             </div>
+                        </div>
+                        <button @click="addSkillFile" class="p-2 text-center text-blue-500 border-t hover:bg-blue-50">+ Add File</button>
+                    </div>
+
+                    <!-- File Editor -->
+                    <div class="w-2/3 flex flex-col p-4">
+                        <div v-if="skillForm.files.length > 0">
+                             <input v-model="skillForm.files[currentSkillFileIndex].filename" class="w-full border p-2 rounded mb-2 font-mono text-sm" placeholder="filename.md">
+                             <textarea v-model="skillForm.files[currentSkillFileIndex].content" class="w-full h-full border p-2 rounded font-mono text-sm resize-none flex-grow" placeholder="Content..."></textarea>
+                        </div>
+                        <div v-else class="flex items-center justify-center h-full text-gray-400">
+                            Select or add a file
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 mt-4">
                     <button @click="showSkillModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
                     <button @click="saveSkill" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
                 </div>
@@ -144,19 +287,10 @@
         createApp({
             setup() {
                 const config = reactive({
-                    common_settings: {},
-                    claude_settings: {},
-                    gemini_settings: {},
-                    codex_settings: {},
+                    mcp_servers: [],
+                    custom_agents: [],
                     skills: [],
                     projects: []
-                })
-
-                const jsonStrings = reactive({
-                    common_settings: '{}',
-                    claude_settings: '{}',
-                    gemini_settings: '{}',
-                    codex_settings: '{}'
                 })
 
                 const loading = ref(false)
@@ -164,16 +298,24 @@
                 const notification = ref(null)
                 const deploymentLog = ref([])
 
-                const tabs = ['Settings', 'Skills', 'Projects']
-                const currentTab = ref('Settings')
+                const tabs = ['MCP Servers', 'Agents', 'Skills', 'Projects']
+                const currentTab = ref('MCP Servers')
 
-                const errors = reactive({})
-                const settingKeys = ['common_settings', 'claude_settings', 'gemini_settings', 'codex_settings']
+                // MCP Modal
+                const showMcpModal = ref(false)
+                const editingMcpIndex = ref(-1)
+                const mcpForm = reactive({ name: '', type: 'stdio', command: '', args: [], url: '', env: [] })
 
-                // Skill Modal logic
+                // Agent Modal
+                const showAgentModal = ref(false)
+                const editingAgentIndex = ref(-1)
+                const agentForm = reactive({ name: '', description: '', system_prompt: '' })
+
+                // Skill Modal
                 const showSkillModal = ref(false)
                 const editingSkillIndex = ref(-1)
-                const skillForm = reactive({ name: '', description: '', content: '' })
+                const skillForm = reactive({ name: '', description: '', files: [] })
+                const currentSkillFileIndex = ref(0)
 
                 const newProject = ref('')
 
@@ -184,15 +326,20 @@
                         const res = await fetch('/api/config')
                         const data = await res.json()
 
-                        // We need to merge carefully to not lose reactivity if we replaced whole object
-                        // But Object.assign works fine on reactive objects
-                        Object.assign(config, data)
+                        // Default empty arrays if undefined
+                        if (!data.mcp_servers) data.mcp_servers = []
+                        if (!data.custom_agents) data.custom_agents = []
+                        if (!data.skills) data.skills = []
 
-                        // Populate JSON strings
-                        jsonStrings.common_settings = JSON.stringify(config.common_settings || {}, null, 2)
-                        jsonStrings.claude_settings = JSON.stringify(config.claude_settings || {}, null, 2)
-                        jsonStrings.gemini_settings = JSON.stringify(config.gemini_settings || {}, null, 2)
-                        jsonStrings.codex_settings = JSON.stringify(config.codex_settings || {}, null, 2)
+                        // Migrate legacy skills (content string -> files array)
+                        data.skills.forEach(s => {
+                            if (!s.files) s.files = []
+                            if (s.content && s.files.length === 0) {
+                                s.files.push({ filename: 'README.md', content: s.content })
+                            }
+                        })
+
+                        Object.assign(config, data)
                     } catch (e) {
                         showNotify('Error loading config', 'error')
                         console.error(e)
@@ -202,17 +349,6 @@
                 }
 
                 const saveConfig = async () => {
-                    // Sync JSON strings back to config objects
-                    try {
-                        config.common_settings = JSON.parse(jsonStrings.common_settings)
-                        config.claude_settings = JSON.parse(jsonStrings.claude_settings)
-                        config.gemini_settings = JSON.parse(jsonStrings.gemini_settings)
-                        config.codex_settings = JSON.parse(jsonStrings.codex_settings)
-                    } catch (e) {
-                        showNotify('Invalid JSON in settings', 'error')
-                        return
-                    }
-
                     loading.value = true
                     try {
                         await fetch('/api/config', {
@@ -229,7 +365,7 @@
                 }
 
                 const deployConfig = async () => {
-                    await saveConfig() // Auto save before deploy
+                    await saveConfig()
                     deploying.value = true
                     deploymentLog.value = []
                     try {
@@ -242,18 +378,9 @@
                             showNotify('Deployment failed', 'error')
                         }
                     } catch (e) {
-                        showNotify('Error deploying config: ' + e.message, 'error')
+                        showNotify('Error deploying: ' + e.message, 'error')
                     } finally {
                         deploying.value = false
-                    }
-                }
-
-                const validateJson = (key, value) => {
-                    try {
-                        JSON.parse(value)
-                        errors[key] = null
-                    } catch (e) {
-                        errors[key] = e.message
                     }
                 }
 
@@ -262,35 +389,69 @@
                     setTimeout(() => notification.value = null, 3000)
                 }
 
-                // Skill Actions
+                // --- MCP Logic ---
+                const openMcpModal = (index = -1) => {
+                    editingMcpIndex.value = index
+                    if (index >= 0) {
+                        const mcp = config.mcp_servers[index]
+                        // Deep copy
+                        Object.assign(mcpForm, JSON.parse(JSON.stringify(mcp)))
+                    } else {
+                         Object.assign(mcpForm, { name: '', type: 'stdio', command: '', args: [], url: '', env: [] })
+                    }
+                    showMcpModal.value = true
+                }
+                const saveMcp = () => {
+                     if (!mcpForm.name) return alert('Name required')
+                     if (editingMcpIndex.value >= 0) {
+                         config.mcp_servers[editingMcpIndex.value] = JSON.parse(JSON.stringify(mcpForm))
+                     } else {
+                         config.mcp_servers.push(JSON.parse(JSON.stringify(mcpForm)))
+                     }
+                     showMcpModal.value = false
+                }
+                const deleteMcp = (index) => { if(confirm('Delete MCP Server?')) config.mcp_servers.splice(index, 1) }
+
+                // --- Agent Logic ---
+                const openAgentModal = (index = -1) => {
+                    editingAgentIndex.value = index
+                    if (index >= 0) Object.assign(agentForm, { ...config.custom_agents[index] })
+                    else Object.assign(agentForm, { name: '', description: '', system_prompt: '' })
+                    showAgentModal.value = true
+                }
+                const saveAgent = () => {
+                    if (!agentForm.name) return alert('Name required')
+                    if (editingAgentIndex.value >= 0) config.custom_agents[editingAgentIndex.value] = { ...agentForm }
+                    else config.custom_agents.push({ ...agentForm })
+                    showAgentModal.value = false
+                }
+                const deleteAgent = (index) => { if(confirm('Delete Agent?')) config.custom_agents.splice(index, 1) }
+
+                // --- Skill Logic ---
                 const openSkillModal = (index = -1) => {
                     editingSkillIndex.value = index
+                    currentSkillFileIndex.value = 0
                     if (index >= 0) {
-                        Object.assign(skillForm, config.skills[index])
+                        const s = config.skills[index]
+                        Object.assign(skillForm, JSON.parse(JSON.stringify(s)))
                     } else {
-                        Object.assign(skillForm, { name: '', description: '', content: '' })
+                        Object.assign(skillForm, { name: '', description: '', files: [] })
                     }
                     showSkillModal.value = true
                 }
-
+                const addSkillFile = () => {
+                    skillForm.files.push({ filename: 'new_file.md', content: '' })
+                    currentSkillFileIndex.value = skillForm.files.length - 1
+                }
                 const saveSkill = () => {
-                    if (!skillForm.name) return alert('Name is required')
-
-                    if (editingSkillIndex.value >= 0) {
-                        config.skills[editingSkillIndex.value] = { ...skillForm }
-                    } else {
-                        config.skills.push({ ...skillForm })
-                    }
+                    if (!skillForm.name) return alert('Name required')
+                    if (editingSkillIndex.value >= 0) config.skills[editingSkillIndex.value] = JSON.parse(JSON.stringify(skillForm))
+                    else config.skills.push(JSON.parse(JSON.stringify(skillForm)))
                     showSkillModal.value = false
                 }
+                const deleteSkill = (index) => { if(confirm('Delete Skill?')) config.skills.splice(index, 1) }
 
-                const deleteSkill = (index) => {
-                    if (confirm('Are you sure?')) {
-                        config.skills.splice(index, 1)
-                    }
-                }
-
-                // Project Actions
+                // --- Project Logic ---
                 const addProject = () => {
                     const val = newProject.value.trim()
                     if (val && !config.projects.includes(val)) {
@@ -298,38 +459,25 @@
                         newProject.value = ''
                     }
                 }
-
-                const removeProject = (index) => {
-                    config.projects.splice(index, 1)
-                }
+                const removeProject = (index) => { config.projects.splice(index, 1) }
 
                 onMounted(() => {
                     fetchConfig()
                 })
 
                 return {
-                    config,
-                    jsonStrings,
-                    loading,
-                    deploying,
-                    notification,
-                    deploymentLog,
-                    tabs,
-                    currentTab,
-                    errors,
-                    showSkillModal,
-                    editingSkillIndex,
-                    skillForm,
-                    newProject,
-                    saveConfig,
-                    deployConfig,
-                    validateJson,
-                    openSkillModal,
-                    saveSkill,
-                    deleteSkill,
-                    addProject,
-                    removeProject,
-                    settingKeys
+                    config, loading, deploying, notification, deploymentLog,
+                    tabs, currentTab, newProject, addProject, removeProject,
+                    saveConfig, deployConfig,
+
+                    // MCP
+                    showMcpModal, editingMcpIndex, mcpForm, openMcpModal, saveMcp, deleteMcp,
+
+                    // Agent
+                    showAgentModal, editingAgentIndex, agentForm, openAgentModal, saveAgent, deleteAgent,
+
+                    // Skill
+                    showSkillModal, editingSkillIndex, skillForm, currentSkillFileIndex, openSkillModal, saveSkill, deleteSkill, addSkillFile
                 }
             }
         }).mount('#app')
