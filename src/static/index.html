@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Agent Config</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div id="app" class="container mx-auto p-6">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-6 bg-white p-4 rounded shadow">
+            <h1 class="text-2xl font-bold text-gray-800">Unified Agent Config</h1>
+            <div>
+                <button @click="saveConfig" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded mr-2 disabled:opacity-50" :disabled="loading">
+                    Save Config
+                </button>
+                <button @click="deployConfig" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50" :disabled="deploying">
+                    {{ deploying ? 'Deploying...' : 'Deploy to Agents' }}
+                </button>
+            </div>
+        </header>
+
+        <!-- Notification -->
+        <div v-if="notification" class="mb-4 p-4 rounded text-white" :class="notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'">
+            {{ notification.message }}
+        </div>
+
+        <!-- Deployment Log -->
+        <div v-if="deploymentLog.length > 0" class="mb-6 bg-gray-900 text-green-400 p-4 rounded shadow font-mono text-sm max-h-64 overflow-y-auto">
+            <h3 class="text-white font-bold mb-2">Deployment Log:</h3>
+            <div v-for="(line, index) in deploymentLog" :key="index">{{ line }}</div>
+            <button @click="deploymentLog = []" class="mt-2 text-xs text-gray-500 hover:text-white">Clear</button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex mb-6 border-b border-gray-300">
+            <button v-for="tab in tabs" :key="tab"
+                @click="currentTab = tab"
+                class="px-6 py-2 font-medium focus:outline-none"
+                :class="currentTab === tab ? 'tab-active' : 'text-gray-500 hover:text-gray-700'">
+                {{ tab }}
+            </button>
+        </div>
+
+        <!-- Content -->
+        <main class="bg-white p-6 rounded shadow min-h-[500px]">
+
+            <!-- Settings Tab -->
+            <div v-if="currentTab === 'Settings'">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div v-for="key in settingKeys" :key="key" class="border p-4 rounded">
+                        <h3 class="font-bold mb-2 capitalize">{{ key.replace('_', ' ') }}</h3>
+                        <p class="text-xs text-gray-500 mb-2">
+                            {{ key === 'common_settings' ? 'Applied to all agents (merged)' : 'Specific settings for ' + key.split('_')[0] }}
+                        </p>
+                        <textarea v-model="jsonStrings[key]" @input="validateJson(key, jsonStrings[key])"
+                            class="w-full h-64 p-2 border rounded font-mono text-sm"
+                            :class="errors[key] ? 'border-red-500' : 'border-gray-300'"></textarea>
+                        <p v-if="errors[key]" class="text-red-500 text-xs mt-1">{{ errors[key] }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skills Tab -->
+            <div v-if="currentTab === 'Skills'">
+                <div class="flex justify-between mb-4">
+                    <h2 class="text-xl font-bold">Skills ({{ config.skills.length }})</h2>
+                    <button @click="openSkillModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Skill</button>
+                </div>
+
+                <div v-if="config.skills.length === 0" class="text-gray-500 text-center py-10">No skills yet. Add one!</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div v-for="(skill, index) in config.skills" :key="index" class="border p-4 rounded hover:shadow-lg transition flex flex-col justify-between">
+                        <div>
+                            <h3 class="font-bold text-lg mb-1">{{ skill.name }}</h3>
+                            <p class="text-gray-600 text-sm mb-3 h-10 overflow-hidden text-ellipsis">{{ skill.description }}</p>
+                        </div>
+                        <div class="flex justify-end gap-2 border-t pt-2">
+                            <button @click="openSkillModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
+                            <button @click="deleteSkill(index)" class="text-red-500 text-sm hover:underline">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Projects Tab -->
+            <div v-if="currentTab === 'Projects'">
+                <h2 class="text-xl font-bold mb-4">Project Paths</h2>
+                <div class="flex gap-2 mb-4">
+                    <input v-model="newProject" placeholder="/path/to/project" class="flex-grow border p-2 rounded" @keyup.enter="addProject">
+                    <button @click="addProject" class="bg-indigo-500 text-white px-4 py-2 rounded hover:bg-indigo-600">Add</button>
+                </div>
+                <ul class="divide-y border rounded">
+                    <li v-for="(proj, index) in config.projects" :key="index" class="py-3 px-4 flex justify-between items-center hover:bg-gray-50">
+                        <span class="font-mono text-sm">{{ proj }}</span>
+                        <button @click="removeProject(index)" class="text-red-500 hover:text-red-700">Remove</button>
+                    </li>
+                    <li v-if="config.projects.length === 0" class="p-4 text-gray-500 text-center">No projects added.</li>
+                </ul>
+                <p class="text-gray-500 italic mt-4 text-sm">Configs will be deployed to these project folders (in .claude, .gemini, etc.) in addition to the global user folder.</p>
+            </div>
+
+        </main>
+
+        <!-- Skill Modal -->
+        <div v-if="showSkillModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+                <h2 class="text-2xl font-bold mb-4">{{ editingSkillIndex === -1 ? 'New Skill' : 'Edit Skill' }}</h2>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Name</label>
+                    <input v-model="skillForm.name" class="w-full border p-2 rounded focus:ring focus:ring-blue-200" placeholder="e.g. api-tester">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Description</label>
+                    <input v-model="skillForm.description" class="w-full border p-2 rounded focus:ring focus:ring-blue-200" placeholder="Short description">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">Content (Markdown)</label>
+                    <textarea v-model="skillForm.content" class="w-full h-64 border p-2 rounded font-mono text-sm focus:ring focus:ring-blue-200" placeholder="# Instructions..."></textarea>
+                </div>
+
+                <div class="flex justify-end gap-2">
+                    <button @click="showSkillModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                    <button @click="saveSkill" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Save</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, onMounted } = Vue
+
+        createApp({
+            setup() {
+                const config = reactive({
+                    common_settings: {},
+                    claude_settings: {},
+                    gemini_settings: {},
+                    codex_settings: {},
+                    skills: [],
+                    projects: []
+                })
+
+                const jsonStrings = reactive({
+                    common_settings: '{}',
+                    claude_settings: '{}',
+                    gemini_settings: '{}',
+                    codex_settings: '{}'
+                })
+
+                const loading = ref(false)
+                const deploying = ref(false)
+                const notification = ref(null)
+                const deploymentLog = ref([])
+
+                const tabs = ['Settings', 'Skills', 'Projects']
+                const currentTab = ref('Settings')
+
+                const errors = reactive({})
+                const settingKeys = ['common_settings', 'claude_settings', 'gemini_settings', 'codex_settings']
+
+                // Skill Modal logic
+                const showSkillModal = ref(false)
+                const editingSkillIndex = ref(-1)
+                const skillForm = reactive({ name: '', description: '', content: '' })
+
+                const newProject = ref('')
+
+                // Fetch Config
+                const fetchConfig = async () => {
+                    loading.value = true
+                    try {
+                        const res = await fetch('/api/config')
+                        const data = await res.json()
+
+                        // We need to merge carefully to not lose reactivity if we replaced whole object
+                        // But Object.assign works fine on reactive objects
+                        Object.assign(config, data)
+
+                        // Populate JSON strings
+                        jsonStrings.common_settings = JSON.stringify(config.common_settings || {}, null, 2)
+                        jsonStrings.claude_settings = JSON.stringify(config.claude_settings || {}, null, 2)
+                        jsonStrings.gemini_settings = JSON.stringify(config.gemini_settings || {}, null, 2)
+                        jsonStrings.codex_settings = JSON.stringify(config.codex_settings || {}, null, 2)
+                    } catch (e) {
+                        showNotify('Error loading config', 'error')
+                        console.error(e)
+                    } finally {
+                        loading.value = false
+                    }
+                }
+
+                const saveConfig = async () => {
+                    // Sync JSON strings back to config objects
+                    try {
+                        config.common_settings = JSON.parse(jsonStrings.common_settings)
+                        config.claude_settings = JSON.parse(jsonStrings.claude_settings)
+                        config.gemini_settings = JSON.parse(jsonStrings.gemini_settings)
+                        config.codex_settings = JSON.parse(jsonStrings.codex_settings)
+                    } catch (e) {
+                        showNotify('Invalid JSON in settings', 'error')
+                        return
+                    }
+
+                    loading.value = true
+                    try {
+                        await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(config)
+                        })
+                        showNotify('Configuration saved!', 'success')
+                    } catch (e) {
+                        showNotify('Error saving config', 'error')
+                    } finally {
+                        loading.value = false
+                    }
+                }
+
+                const deployConfig = async () => {
+                    await saveConfig() // Auto save before deploy
+                    deploying.value = true
+                    deploymentLog.value = []
+                    try {
+                        const res = await fetch('/api/deploy', { method: 'POST' })
+                        const data = await res.json()
+                        if (data.status === 'deployed') {
+                            showNotify('Deployed successfully!', 'success')
+                            deploymentLog.value = data.log || []
+                        } else {
+                            showNotify('Deployment failed', 'error')
+                        }
+                    } catch (e) {
+                        showNotify('Error deploying config: ' + e.message, 'error')
+                    } finally {
+                        deploying.value = false
+                    }
+                }
+
+                const validateJson = (key, value) => {
+                    try {
+                        JSON.parse(value)
+                        errors[key] = null
+                    } catch (e) {
+                        errors[key] = e.message
+                    }
+                }
+
+                const showNotify = (msg, type = 'success') => {
+                    notification.value = { message: msg, type }
+                    setTimeout(() => notification.value = null, 3000)
+                }
+
+                // Skill Actions
+                const openSkillModal = (index = -1) => {
+                    editingSkillIndex.value = index
+                    if (index >= 0) {
+                        Object.assign(skillForm, config.skills[index])
+                    } else {
+                        Object.assign(skillForm, { name: '', description: '', content: '' })
+                    }
+                    showSkillModal.value = true
+                }
+
+                const saveSkill = () => {
+                    if (!skillForm.name) return alert('Name is required')
+
+                    if (editingSkillIndex.value >= 0) {
+                        config.skills[editingSkillIndex.value] = { ...skillForm }
+                    } else {
+                        config.skills.push({ ...skillForm })
+                    }
+                    showSkillModal.value = false
+                }
+
+                const deleteSkill = (index) => {
+                    if (confirm('Are you sure?')) {
+                        config.skills.splice(index, 1)
+                    }
+                }
+
+                // Project Actions
+                const addProject = () => {
+                    const val = newProject.value.trim()
+                    if (val && !config.projects.includes(val)) {
+                        config.projects.push(val)
+                        newProject.value = ''
+                    }
+                }
+
+                const removeProject = (index) => {
+                    config.projects.splice(index, 1)
+                }
+
+                onMounted(() => {
+                    fetchConfig()
+                })
+
+                return {
+                    config,
+                    jsonStrings,
+                    loading,
+                    deploying,
+                    notification,
+                    deploymentLog,
+                    tabs,
+                    currentTab,
+                    errors,
+                    showSkillModal,
+                    editingSkillIndex,
+                    skillForm,
+                    newProject,
+                    saveConfig,
+                    deployConfig,
+                    validateJson,
+                    openSkillModal,
+                    saveSkill,
+                    deleteSkill,
+                    addProject,
+                    removeProject,
+                    settingKeys
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
