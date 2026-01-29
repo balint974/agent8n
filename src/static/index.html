@@ -27,7 +27,7 @@
                 <div class="relative inline-block text-left">
                     <div>
                         <button @click="showDeployMenu = !showDeployMenu" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded inline-flex items-center" :disabled="deploying">
-                            {{ deploying ? 'Deploying...' : 'Deploy' }}
+                            {{ deploying ? 'Deploying...' : 'Deploy Global' }}
                             <svg class="-mr-1 ml-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                             </svg>
@@ -70,37 +70,30 @@
         <!-- Content -->
         <main class="bg-white p-6 rounded shadow min-h-[500px]">
 
-            <!-- MCP Servers Tab -->
-            <div v-if="currentTab === 'MCP Servers'">
-                <div class="flex justify-between mb-4">
-                    <h2 class="text-xl font-bold">MCP Servers ({{ config.mcp_servers.length }})</h2>
-                    <button @click="openMcpModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Server</button>
-                </div>
-
-                <div v-if="config.mcp_servers.length === 0" class="text-gray-500 text-center py-10">No MCP servers configured.</div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div v-for="(server, index) in config.mcp_servers" :key="index" class="border p-4 rounded hover:shadow-lg transition">
-                        <div class="flex justify-between items-start mb-2">
-                            <h3 class="font-bold text-lg">{{ server.name }}</h3>
-                            <span class="text-xs bg-gray-200 px-2 py-1 rounded">{{ server.type }}</span>
-                        </div>
-                        <p v-if="server.type === 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.command }} {{ server.args.join(' ') }}</p>
-                        <p v-if="server.type !== 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.url }}</p>
-
-                        <div class="flex justify-end gap-2 border-t pt-2 mt-2">
-                            <button @click="openMcpModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
-                            <button @click="deleteMcp(index)" class="text-red-500 text-sm hover:underline">Delete</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Agents Tab -->
             <div v-if="currentTab === 'Agents'">
                  <div class="flex justify-between mb-4">
                     <h2 class="text-xl font-bold">Custom Agents ({{ config.custom_agents.length }})</h2>
-                    <button @click="openAgentModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Agent</button>
+                    <div class="flex gap-2">
+                        <!-- Local Deploy Agents -->
+                        <div class="relative inline-block text-left">
+                            <button @click="showAgentsDeployMenu = !showAgentsDeployMenu" class="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded text-sm inline-flex items-center">
+                                Deploy Agents
+                                <svg class="-mr-1 ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div v-if="showAgentsDeployMenu" class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-40">
+                                <div class="py-1">
+                                    <a href="#" @click.prevent="deployConfig(null, ['agents'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">All Agents</a>
+                                    <a href="#" @click.prevent="deployConfig(['claude'], ['agents'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Claude Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['gemini'], ['agents'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Gemini Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['codex'], ['agents'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Codex Only</a>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="openAgentModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Agent</button>
+                    </div>
                 </div>
 
                 <div v-if="config.custom_agents.length === 0" class="text-gray-500 text-center py-10">No custom agents configured.</div>
@@ -122,12 +115,30 @@
                 </div>
             </div>
 
-
             <!-- Skills Tab -->
             <div v-if="currentTab === 'Skills'">
                 <div class="flex justify-between mb-4">
                     <h2 class="text-xl font-bold">Skills ({{ config.skills.length }})</h2>
-                    <button @click="openSkillModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Skill</button>
+                    <div class="flex gap-2">
+                        <!-- Local Deploy Skills -->
+                        <div class="relative inline-block text-left">
+                            <button @click="showSkillsDeployMenu = !showSkillsDeployMenu" class="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded text-sm inline-flex items-center">
+                                Deploy Skills
+                                <svg class="-mr-1 ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div v-if="showSkillsDeployMenu" class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-40">
+                                <div class="py-1">
+                                    <a href="#" @click.prevent="deployConfig(null, ['skills'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">All Agents</a>
+                                    <a href="#" @click.prevent="deployConfig(['claude'], ['skills'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Claude Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['gemini'], ['skills'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Gemini Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['codex'], ['skills'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Codex Only</a>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="openSkillModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Skill</button>
+                    </div>
                 </div>
 
                 <div v-if="config.skills.length === 0" class="text-gray-500 text-center py-10">No skills yet. Add one!</div>
@@ -142,6 +153,51 @@
                         <div class="flex justify-end gap-2 border-t pt-2">
                             <button @click="openSkillModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
                             <button @click="deleteSkill(index)" class="text-red-500 text-sm hover:underline">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MCP Servers Tab -->
+            <div v-if="currentTab === 'MCP Servers'">
+                <div class="flex justify-between mb-4">
+                    <h2 class="text-xl font-bold">MCP Servers ({{ config.mcp_servers.length }})</h2>
+                    <div class="flex gap-2">
+                        <!-- Local Deploy MCP -->
+                        <div class="relative inline-block text-left">
+                            <button @click="showMcpDeployMenu = !showMcpDeployMenu" class="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded text-sm inline-flex items-center">
+                                Deploy MCP
+                                <svg class="-mr-1 ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div v-if="showMcpDeployMenu" class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-40">
+                                <div class="py-1">
+                                    <a href="#" @click.prevent="deployConfig(null, ['mcp'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">All Agents</a>
+                                    <a href="#" @click.prevent="deployConfig(['claude'], ['mcp'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Claude Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['gemini'], ['mcp'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Gemini Only</a>
+                                    <a href="#" @click.prevent="deployConfig(['codex'], ['mcp'])" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Codex Only</a>
+                                </div>
+                            </div>
+                        </div>
+                        <button @click="openMcpModal()" class="bg-indigo-500 text-white px-3 py-1 rounded text-sm hover:bg-indigo-600">Add Server</button>
+                    </div>
+                </div>
+
+                <div v-if="config.mcp_servers.length === 0" class="text-gray-500 text-center py-10">No MCP servers configured.</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div v-for="(server, index) in config.mcp_servers" :key="index" class="border p-4 rounded hover:shadow-lg transition">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="font-bold text-lg">{{ server.name }}</h3>
+                            <span class="text-xs bg-gray-200 px-2 py-1 rounded">{{ server.type }}</span>
+                        </div>
+                        <p v-if="server.type === 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.command }} {{ server.args.join(' ') }}</p>
+                        <p v-if="server.type !== 'stdio'" class="text-sm font-mono text-gray-600 mb-2 truncate">{{ server.url }}</p>
+
+                        <div class="flex justify-end gap-2 border-t pt-2 mt-2">
+                            <button @click="openMcpModal(index)" class="text-blue-500 text-sm hover:underline">Edit</button>
+                            <button @click="deleteMcp(index)" class="text-red-500 text-sm hover:underline">Delete</button>
                         </div>
                     </div>
                 </div>
@@ -219,7 +275,6 @@
         <div v-if="showMcpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
              <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
                 <h2 class="text-2xl font-bold mb-4">{{ editingMcpIndex === -1 ? 'New MCP Server' : 'Edit MCP Server' }}</h2>
-                <!-- Form same as before -->
                 <div class="mb-4">
                     <label class="block text-sm font-medium mb-1">Name</label>
                     <input v-model="mcpForm.name" class="w-full border p-2 rounded" placeholder="e.g. github">
@@ -355,8 +410,8 @@
                 const notification = ref(null)
                 const deploymentLog = ref([])
 
-                const tabs = ['MCP Servers', 'Agents', 'Skills', 'Projects']
-                const currentTab = ref('MCP Servers')
+                const tabs = ['Agents', 'Skills', 'MCP Servers', 'Projects']
+                const currentTab = ref('Agents')
 
                 // --- Import State ---
                 const showImportModal = ref(false)
@@ -364,8 +419,11 @@
                 const scanResults = ref({})
                 const selectedImports = ref({})
 
-                // --- Deploy Menu ---
+                // --- Deploy Menus ---
                 const showDeployMenu = ref(false)
+                const showAgentsDeployMenu = ref(false)
+                const showSkillsDeployMenu = ref(false)
+                const showMcpDeployMenu = ref(false)
 
                 // MCP Modal
                 const showMcpModal = ref(false)
@@ -423,17 +481,26 @@
                     }
                 }
 
-                const deployConfig = async (filter = null) => {
+                const deployConfig = async (agentFilter = null, typesFilter = null) => {
+                    // Close all menus
                     showDeployMenu.value = false
+                    showAgentsDeployMenu.value = false
+                    showSkillsDeployMenu.value = false
+                    showMcpDeployMenu.value = false
+
                     await saveConfig()
                     deploying.value = true
                     deploymentLog.value = []
+
+                    const payload = {}
+                    if (agentFilter) payload.agent_filter = agentFilter
+                    if (typesFilter) payload.include_types = typesFilter
+
                     try {
-                        const body = filter ? JSON.stringify({ agent_filter: filter }) : '{}'
                         const res = await fetch('/api/deploy', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
-                            body
+                            body: JSON.stringify(payload)
                         })
                         const data = await res.json()
                         if (data.status === 'deployed') {
@@ -589,8 +656,8 @@
                     // Import
                     showImportModal, scanning, scanResults, selectedImports, scanConfigs, performImport,
 
-                    // Deploy
-                    showDeployMenu,
+                    // Deploy Menus
+                    showDeployMenu, showAgentsDeployMenu, showSkillsDeployMenu, showMcpDeployMenu,
 
                     // MCP
                     showMcpModal, editingMcpIndex, mcpForm, openMcpModal, saveMcp, deleteMcp,

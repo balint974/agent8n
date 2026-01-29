@@ -65,7 +65,7 @@ class ConfigManager:
                 toml_str += f'url = "{mcp.url}"\n'
         return toml_str
 
-    def deploy(self, config: UnifiedConfig, agent_filter: List[str] = None):
+    def deploy(self, config: UnifiedConfig, agent_filter: List[str] = None, include_types: List[str] = None):
         targets = [Path.home()] + [Path(p) for p in config.projects]
 
         all_agents = {
@@ -98,6 +98,10 @@ class ConfigManager:
         else:
             agents = all_agents
 
+        # Filter types (mcp, agents, skills)
+        if include_types is None:
+            include_types = ["mcp", "agents", "skills"]
+
         deployment_log = []
 
         for target in targets:
@@ -110,66 +114,107 @@ class ConfigManager:
             for agent_name, agent_data in agents.items():
                 agent_dir = target / agent_data["dir_name"]
                 skills_dir = agent_dir / "skills"
+                settings_path = agent_dir / agent_data["config_file"]
 
                 try:
-                    os.makedirs(skills_dir, exist_ok=True)
+                    os.makedirs(agent_dir, exist_ok=True) # Ensure agent dir exists
 
-                    # 1. Prepare Settings
-                    merged_settings = config.common_settings.copy()
-                    merged_settings.update(agent_data["settings"])
+                    # --- Settings Update Logic (MCP + Agents) ---
+                    should_update_settings = "mcp" in include_types or "agents" in include_types
 
-                    # Inject MCP Servers
-                    if agent_data["format"] == "json":
-                        mcp_json = self._convert_mcp_to_json_structure(config.mcp_servers)
-                        if "mcpServers" not in merged_settings:
-                            merged_settings["mcpServers"] = {}
-                        merged_settings["mcpServers"].update(mcp_json)
+                    if should_update_settings:
+                        # 1. Read Existing
+                        current_settings = {}
+                        if settings_path.exists():
+                            try:
+                                if agent_data["format"] == "json":
+                                    with open(settings_path, 'r') as f:
+                                        current_settings = json.load(f)
+                                elif agent_data["format"] == "toml":
+                                    with open(settings_path, 'r') as f:
+                                        current_settings = toml.load(f)
+                            except Exception as e:
+                                deployment_log.append(f"Warning reading existing settings for {agent_name}: {e}")
+
+                        # 2. Merge (Partial Update)
+                        # Note: We merge strictly structural sections.
+                        # Ideally we'd merge generic settings too if this was a full deploy,
+                        # but for granular type deploy, we focus on specific keys.
+
+                        # Inject MCP Servers
+                        if "mcp" in include_types:
+                            if agent_data["format"] == "json":
+                                mcp_json = self._convert_mcp_to_json_structure(config.mcp_servers)
+                                if "mcpServers" not in current_settings:
+                                    current_settings["mcpServers"] = {}
+                                current_settings["mcpServers"].update(mcp_json)
+                            # TOML logic below
 
                         # Inject Custom Agents
-                        if config.custom_agents:
-                             if "agents" not in merged_settings:
-                                 merged_settings["agents"] = {}
-                             for agent in config.custom_agents:
-                                 merged_settings["agents"][agent.name] = {
-                                     "description": agent.description,
-                                     "instructions": agent.system_prompt
-                                 }
+                        if "agents" in include_types:
+                            if agent_data["format"] == "json":
+                                if config.custom_agents:
+                                     if "agents" not in current_settings:
+                                         current_settings["agents"] = {}
+                                     for agent in config.custom_agents:
+                                         current_settings["agents"][agent.name] = {
+                                             "description": agent.description,
+                                             "instructions": agent.system_prompt
+                                         }
+                            # TOML agents logic not explicitly standard yet, skipping for Codex to avoid breaking.
 
-                    settings_path = agent_dir / agent_data["config_file"]
+                        # 3. Write Back
+                        if agent_data["format"] == "json":
+                            with open(settings_path, 'w') as f:
+                                json.dump(current_settings, f, indent=2)
+                        elif agent_data["format"] == "toml":
+                            with open(settings_path, 'w') as f:
+                                # Write generic settings/existing keys first if we can dump them back?
+                                # Re-dumping toml can lose formatting.
+                                # Simpler approach for now: Dump dictionary using TOML library for robustness
+                                # But we need to handle the specific [mcp_servers] structure if it's special.
 
-                    # 2. Write Settings File
-                    if agent_data["format"] == "json":
-                        with open(settings_path, 'w') as f:
-                            json.dump(merged_settings, f, indent=2)
-                    elif agent_data["format"] == "toml":
-                        with open(settings_path, 'w') as f:
-                            for k, v in merged_settings.items():
-                                if isinstance(v, (str, int, float, bool)):
-                                    f.write(f'{k} = "{v}"\n')
-                            f.write(self._convert_mcp_to_toml_structure(config.mcp_servers))
+                                # If updating MCPs in TOML:
+                                if "mcp" in include_types:
+                                    # Convert current mcp list to dict structure for toml dump
+                                    if "mcp_servers" not in current_settings:
+                                        current_settings["mcp_servers"] = {}
 
-                    deployment_log.append(f"Updated settings for {agent_name} at {target}")
+                                    for mcp in config.mcp_servers:
+                                        m_conf = {}
+                                        if mcp.type == "stdio":
+                                            m_conf["command"] = mcp.command
+                                            m_conf["args"] = mcp.args
+                                            if mcp.env:
+                                                m_conf["env"] = {e.key: e.value for e in mcp.env}
+                                        elif mcp.type in ["http", "sse"]:
+                                            m_conf["url"] = mcp.url
+                                        current_settings["mcp_servers"][mcp.name] = m_conf
 
-                    # 3. Write Skills
-                    for skill in config.skills:
-                        safe_skill_name = "".join([c for c in skill.name if c.isalnum() or c in ('-', '_')]).strip()
-                        if not safe_skill_name: continue
+                                toml.dump(current_settings, f)
 
-                        if skill.files:
-                            skill_subdir = skills_dir / safe_skill_name
-                            os.makedirs(skill_subdir, exist_ok=True)
+                        deployment_log.append(f"Updated settings ({include_types}) for {agent_name} at {target}")
 
-                            # SKILL.md
-                            with open(skill_subdir / "SKILL.md", 'w') as f:
-                                f.write(f"---\nname: {skill.name}\ndescription: {skill.description}\n---\n")
+                    # --- Skills Deployment ---
+                    if "skills" in include_types:
+                        os.makedirs(skills_dir, exist_ok=True)
+                        for skill in config.skills:
+                            safe_skill_name = "".join([c for c in skill.name if c.isalnum() or c in ('-', '_')]).strip()
+                            if not safe_skill_name: continue
 
-                            for sfile in skill.files:
-                                file_path = skill_subdir / sfile.filename
-                                file_path.parent.mkdir(parents=True, exist_ok=True)
-                                with open(file_path, 'w') as f:
-                                    f.write(sfile.content)
+                            if skill.files:
+                                skill_subdir = skills_dir / safe_skill_name
+                                os.makedirs(skill_subdir, exist_ok=True)
 
-                    deployment_log.append(f"Deployed {len(config.skills)} skills for {agent_name} at {target}")
+                                with open(skill_subdir / "SKILL.md", 'w') as f:
+                                    f.write(f"---\nname: {skill.name}\ndescription: {skill.description}\n---\n")
+
+                                for sfile in skill.files:
+                                    file_path = skill_subdir / sfile.filename
+                                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                                    with open(file_path, 'w') as f:
+                                        f.write(sfile.content)
+                        deployment_log.append(f"Deployed {len(config.skills)} skills for {agent_name} at {target}")
 
                 except Exception as e:
                     msg = f"Error deploying to {agent_name} at {target}: {str(e)}"
@@ -181,11 +226,6 @@ class ConfigManager:
     def scan_configurations(self, config: UnifiedConfig) -> Dict[str, Any]:
         """
         Scans global locations and project paths for existing configurations.
-        Returns a dictionary structure:
-        {
-            "Global Claude": { "path": "...", "mcps": [...], "agents": [...], "skills": [...] },
-            "Project X": { ... }
-        }
         """
         scan_results = {}
 
@@ -248,19 +288,8 @@ class ConfigManager:
             if skills_dir.exists():
                 for item in skills_dir.iterdir():
                     if item.is_dir():
-                        # Multi-file skill
                         skill_name = item.name
-                        # Check for SKILL.md
-                        skill_md = item / "SKILL.md"
-                        desc = ""
                         files = []
-
-                        # Read metadata
-                        if skill_md.exists():
-                            # naive parse of frontmatter for description could go here
-                            pass
-
-                        # List files
                         for subfile in item.glob("**/*"):
                             if subfile.is_file():
                                 try:
@@ -275,18 +304,17 @@ class ConfigManager:
                         if files:
                             found_items["skills"].append({
                                 "name": skill_name,
-                                "description": desc,
+                                "description": "",
                                 "files": files
                             })
 
                     elif item.is_file() and item.suffix == ".md":
-                        # Single file skill (legacy/simple)
                         try:
                             with open(item, 'r') as f:
                                 content = f.read()
                             found_items["skills"].append({
                                 "name": item.stem,
-                                "description": "Imported from single file",
+                                "description": "Imported single file",
                                 "files": [{"filename": item.name, "content": content}]
                             })
                         except: pass
@@ -297,68 +325,41 @@ class ConfigManager:
         return scan_results
 
     def import_items(self, config: UnifiedConfig, items: Dict[str, Any]):
-        """
-        Merges items into the config.
-        items structure: { "mcps": [ {name, config} ], "agents": [...], "skills": [...] }
-        """
-
         # Import MCPs
         for mcp in items.get("mcps", []):
             name = mcp["name"]
             raw_conf = mcp["config"]
-
-            # Normalize to MCPServer model
             new_mcp = MCPServer(name=name)
-
-            if "type" in raw_conf:
-                new_mcp.type = raw_conf["type"]
-
-            if "command" in raw_conf:
-                new_mcp.command = raw_conf["command"]
-
-            if "args" in raw_conf:
-                new_mcp.args = raw_conf["args"]
-
-            if "url" in raw_conf:
-                new_mcp.url = raw_conf["url"]
-
+            if "type" in raw_conf: new_mcp.type = raw_conf["type"]
+            if "command" in raw_conf: new_mcp.command = raw_conf["command"]
+            if "args" in raw_conf: new_mcp.args = raw_conf["args"]
+            if "url" in raw_conf: new_mcp.url = raw_conf["url"]
             if "env" in raw_conf and isinstance(raw_conf["env"], dict):
                 new_mcp.env = [MCPEnvVar(key=k, value=v) for k,v in raw_conf["env"].items()]
 
-            # Check for duplicates (overwrite if exists)
             existing_idx = next((i for i, x in enumerate(config.mcp_servers) if x.name == name), -1)
-            if existing_idx >= 0:
-                config.mcp_servers[existing_idx] = new_mcp
-            else:
-                config.mcp_servers.append(new_mcp)
+            if existing_idx >= 0: config.mcp_servers[existing_idx] = new_mcp
+            else: config.mcp_servers.append(new_mcp)
 
         # Import Agents
         for agent in items.get("agents", []):
             name = agent["name"]
             raw_conf = agent["config"]
-
             new_agent = AgentConfig(name=name)
             new_agent.description = raw_conf.get("description", "")
             new_agent.system_prompt = raw_conf.get("instructions", "")
-
             existing_idx = next((i for i, x in enumerate(config.custom_agents) if x.name == name), -1)
-            if existing_idx >= 0:
-                config.custom_agents[existing_idx] = new_agent
-            else:
-                config.custom_agents.append(new_agent)
+            if existing_idx >= 0: config.custom_agents[existing_idx] = new_agent
+            else: config.custom_agents.append(new_agent)
 
         # Import Skills
         for skill in items.get("skills", []):
             name = skill["name"]
-
             new_skill = Skill(name=name)
             new_skill.description = skill.get("description", "")
             new_skill.files = [SkillFile(**f) for f in skill.get("files", [])]
-
             existing_idx = next((i for i, x in enumerate(config.skills) if x.name == name), -1)
-            if existing_idx >= 0:
-                config.skills[existing_idx] = new_skill
-            else:
-                config.skills.append(new_skill)
+            if existing_idx >= 0: config.skills[existing_idx] = new_skill
+            else: config.skills.append(new_skill)
 
         return config

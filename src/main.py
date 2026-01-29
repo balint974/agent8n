@@ -16,6 +16,7 @@ config_manager = ConfigManager()
 
 class DeployRequest(BaseModel):
     agent_filter: Optional[List[str]] = None
+    include_types: Optional[List[str]] = None
 
 class ImportRequest(BaseModel):
     items: Dict[str, Any]
@@ -37,10 +38,11 @@ async def update_config(config: UnifiedConfig):
 async def deploy_config(req: DeployRequest = None):
     # Handle optional body
     filter_list = req.agent_filter if req else None
+    types_list = req.include_types if req else None
 
     config = config_manager.load()
     try:
-        log = config_manager.deploy(config, agent_filter=filter_list)
+        log = config_manager.deploy(config, agent_filter=filter_list, include_types=types_list)
         return {"status": "deployed", "log": log}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
